@@ -26,14 +26,13 @@ func main() {
 
 	upconn, err := net.Dial("udp", fmt.Sprintf("%s:%d", secondIP, connport))
 
-	upbuffer := make([]int16, sampleRate*seconds)
-	upstream, err := portaudio.OpenDefaultStream(1, 0, sampleRate, len(upbuffer), func(in []int16) {
+	upbuffer := make([]float32, sampleRate*seconds)
+	upstream, err := portaudio.OpenDefaultStream(1, 0, sampleRate, len(upbuffer), func(in []float32) {
 		for i := range upbuffer {
 			upbuffer[i] = in[i]
-			// log.Printf("Sample: %04x", in[i])
 		}
 
-		//upconn.Write(floatArrToByteArr(upbuffer))
+		upconn.Write(floatArrToByteArr(upbuffer))
 
 		if err != nil {
 			fmt.Printf("Some error %v", err)
@@ -44,7 +43,7 @@ func main() {
 
 	/** THE DOWNSTREAM */
 
-	downbuffer := make([]byte, sampleRate*seconds)
+	downbuffer := make([]float32, sampleRate*seconds)
 	p := make([]byte, sampleRate*seconds*4)
 	addr := net.UDPAddr{
 		Port: connport,
@@ -55,21 +54,16 @@ func main() {
 		fmt.Printf("Some error %v\n", err)
 		return
 	}
-	downstream, err := portaudio.OpenDefaultStream(0, 1, sampleRate, len(downbuffer), func(out []byte) {
+	downstream, err := portaudio.OpenDefaultStream(0, 1, sampleRate, len(downbuffer), func(out []float32) {
 
-		p = p[:len(out)]
-		k, _, err := ser.ReadFromUDP(p)
-
-		//fmt.Printf("Buff: %d -> %d, %d", k, len(p), len(out))
+		_, _, err := ser.ReadFromUDP(p)
 		chk(err)
 
-		// buffOut := buffToFloatArr(p)
-		out = out[:k]
-		copy(p[:k], out)
+		buffOut := buffToFloatArr(p)
 
-		// for i := 0; i < k; i++ {
-		// 	out[i] = p[i] //buffOut[i]
-		// }
+		for i := range out {
+			out[i] = buffOut[i]
+		}
 	})
 
 	chk(err)
