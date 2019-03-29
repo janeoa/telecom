@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"regexp"
 	"strconv"
@@ -23,17 +24,18 @@ import (
 const pcMicSampleRate = 44100
 const phoneMicSampleRate = 8000
 const seconds = 0.01
+
+// const myIP = "192.168.0.100"
 const myIP = "192.168.25.18"
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
 const tcpPort = 8081
 const baudrate = 9600
-const uartPort = "/dev/cu.wchusbserial1420"
+const uartPort = "/dev/cu.wchusbserial1410"
 
 var fetchTime = time.Now
 
 // var multiline = false
-var lastCommand []byte
 
 type Data struct {
 	Command string
@@ -184,6 +186,8 @@ func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
 
 	message, err := bufio.NewReader(conn).ReadString('\n')
 
+	color.Green(message)
+
 	if err == nil {
 
 		//Getting data from Phone
@@ -205,14 +209,27 @@ func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
 		} else if strings.Compare(data.Command, "sendUSSD") == 0 {
 			fmt.Fprintf(port, "AT+CUSD=1,\"%s\"\r\n", data.Text)
 		} else if strings.Compare(data.Command, "sendSMS") == 0 {
-			out := "00" + "11" + "00" + "0B" + "91"
+			var res []rune
+			out := "0001000B91"
 			phone := encodePhone(data.Phone)
-			res := out + phone + "00" + "00" + "AA" + "0A" + "E8329BFD4697D9EC37"
+			res = append(res, []rune(out + phone + "00" + "08")[:]...)
+			// res := out + phone + "00" + "08" + "AA"
+			text := hex.EncodeToString(UCS2.Encode([]byte(data.Text)))
+			hexL := strconv.FormatInt(int64(len(text)/2), 16)
+			if len(hexL) < 2 {
+				hexL = "0" + hexL
+			}
+
+			res = append(res, []rune(hexL)[:]...)
+			res = append(res, []rune(text)[:]...)
 
 			lengz := len(res)/2 - 1
+
+			color.Yellow("Lengz: %d", lengz)
+
 			fmt.Fprintf(port, "AT+CMGS=%d\r", lengz)
 			time.Sleep(time.Second)
-			fmt.Fprintf(port, "%s\r", res)
+			fmt.Fprintf(port, "%s\r", string(res))
 			time.Sleep(time.Second)
 			fmt.Fprintf(port, string([]byte{0x1A}))
 			// sendAT(port, "AT+CMGF=1")
@@ -253,6 +270,7 @@ func sendAT(s io.ReadWriteCloser, comm string) {
 }
 
 var voltageErrors = [...]string{"UNDER-VOLTAGE POWER DOWN", "UNDER-VOLTAGE WARNNING", "OVER-VOLTAGE POWER DOWN", "OVER-VOLTAGE WARNNING"}
+var lastCommand []byte
 
 func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 	yellow := color.New(color.FgYellow).SprintFunc()
@@ -284,7 +302,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 		if strings.Index(item, "+CMTE") > -1 {
 			color.Red("Device is running HOT")
 			fmt.Fprintf(conn, red("{\"info\":\"Device is running HOT\"}"))
-		} else if strings.Index(item, "\nNO CARRIER\r") > -1 {
+		} else if strings.Index(item, "NO CARRIER") > -1 {
 			color.Red("Call ended")
 			fmt.Fprintf(conn, green("{\"info\":\"call ended\"}"))
 		} else if strings.Index(item, "+CUSD:") > -1 {
@@ -322,7 +340,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 			if len(res) > 0 {
 				if res[1] != "" {
 					color.Yellow("Phone number %s", res[1])
-					fmt.Fprintf(conn, yellow("{\"number\":\"%s\"}"), res[1])
+					fmt.Fprintf(conn, yellow("{\"command\":\"incoming\", \"phone\":\"%s\"}\n"), res[1])
 				}
 			}
 		} else if strings.Index(item, "+CMTI:") > -1 {
@@ -330,12 +348,15 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 			res := re.FindStringSubmatch(item)
 
 			if len(res) > -1 {
-				color.Yellow("New SMS %s")
+				color.Yellow("New SMS %s", res[1])
 				fmt.Fprintf(conn, yellow("{\"response\":\"new SMS\"}\n"))
-				fmt.Fprintf(uart, "AT+CMGR=%d", res[1])
+				fmt.Fprintf(uart, "AT+CMGR=%s", res[1])
 			}
 		} else if strings.Index(item, "+CMGR:") > -1 {
 			color.Red("Asd")
+			lastCommand = append(lastCommand, item[:]...)
+			item = string(lastCommand)
+
 			re := regexp.MustCompile(`\+CMGR\:\s\d+,\"(?:.+)?\",\d+\r\n(.+|\n+)\r\n`)
 			rssi := re.FindStringSubmatch(item)
 
@@ -345,29 +366,38 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 				convBytes := []rune(rssi[1])
 
-				index, _ := strconv.ParseInt(string(convBytes[0:2]), 0, 16)
-				if index%2 == 1 {
-					index += 1
-				}
-				index2 := len(convBytes) - int(index)*2
-				phone := parsePhone(convBytes[22:34])
-				converted, epta := hex.DecodeString(string(convBytes[index2:]))
-				text := ""
+				index, _ := hex.DecodeString(string(convBytes[26*2 : 27*2]))
+				typeI, _ := hex.DecodeString(string(convBytes[36:38]))
 
-				if epta != nil {
-					text = string(convBytes[index2:])
-				} else {
-					text = string(UCS2.Decode(converted))
-				}
+				color.Green(string(convBytes[26*2 : 27*2]))
+
+				index2 := len(convBytes) - int(index[0])*2
+				phone := parsePhone(convBytes[22:34])
+				converted, _ := hex.DecodeString(string(convBytes[index2:]))
+
+				text1 := DecodePDU7(string(convBytes[index2:]))
+
+				text2 := string(UCS2.Decode(converted))
 
 				color.Yellow("PDU: %s", rssi[1])
 				color.Yellow("Length: %d", index) //1	1
 				color.Yellow("phone: %s", phone)
-				color.Yellow("SMS: %s", rssi[1])
+				color.Yellow("phone: %s", phone)
 				color.Yellow("SMS: %s", string(convBytes[index2:]))
-				color.Yellow("Text: %s", text)
+				color.Yellow("type: %s", hex.Dump(typeI))
+				color.Yellow("PDU7: %q", text1)
+				color.Yellow("UCS2: %q", text2)
 
-				fmt.Fprintf(conn, yellow("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q }"), phone, converted)
+				// fmtet := fmt.Sprintf("%q", text1)
+				out := ""
+				// if []rune(fmtet)[1] == []rune("\\")[0] && []rune(fmtet)[2] == []rune("x")[0] {
+				if typeI[0] == 0x08 {
+					out = text2
+				} else {
+					out = text1
+				}
+
+				fmt.Fprintf(conn, yellow("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q}"), phone, out)
 			}
 
 		} else if strings.Index(item, "+CSQ:") > -1 {
@@ -387,7 +417,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 			if len(stat) > 0 {
 				color.Yellow("The network is %s", (map[bool]string{true: "connected", false: "searching"})[stat[1] != "0"])
-				fmt.Fprintf(conn, yellow("{\"connected\":%s}"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
+				fmt.Fprintf(conn, yellow("{\"connected\":%s}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
 			}
 
 		} else if strings.Index(item, "BUSY") > -1 {
@@ -398,8 +428,13 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 		} else if strings.Index(item, "OK") > -1 {
 			color.Green("OK")
 		} else {
+			lastCommand = append(lastCommand, item[:]...)
 			color.Red("LAST response is undefined")
+			continue
 		}
+
+		lastCommand = lastCommand[:0]
+
 	}
 
 	if len(in) == 1 && in[0] == 0 {
@@ -422,6 +457,12 @@ func recieve(conn net.Conn, s io.ReadWriteCloser) {
 		color.Magenta(hex.Dump(buf[:n]))
 		lastCommand = append(lastCommand, buf[:n]...)
 		// fmt.Printf("BEFORE{%s}\n", string(lastCommand))
+
+		if len(buf[:n]) == 1 && buf[0] == 0x00 {
+			red := color.New(color.FgRed).SprintFunc()
+			fmt.Fprintf(conn, red("{\"warning\":\"voltage error\"}\n"))
+		}
+
 		if strings.HasSuffix(string(buf[:n]), "\r\n") || strings.HasSuffix(string(buf[:n]), string([]byte{0x0d, 0x0a, 0x00})) {
 			color.Green("\\r\\n")
 			getResponse(s, conn, lastCommand)
@@ -491,4 +532,26 @@ func encodePhone(in string) string {
 	}
 
 	return string(out[:])
+}
+
+// DecodePDU7 is nice
+func DecodePDU7(h string) (result string) {
+	var binstr string
+
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		// May be you need to raise exception here
+		return ""
+	}
+	for i := len(b) - 1; i >= 0; i-- {
+		binstr += fmt.Sprintf("%08b", b[i])
+	}
+	for len(binstr) > 0 {
+		p := int(math.Max(float64(len(binstr)-7), 0))
+		b, _ := strconv.ParseUint(binstr[p:], 2, 8)
+		result += string(b)
+		binstr = binstr[:p]
+	}
+
+	return result
 }
