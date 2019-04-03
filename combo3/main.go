@@ -30,12 +30,15 @@ const myIP = "192.168.25.18"
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
 const tcpPort = 8081
-const baudrate = 9600
+const baudrate = 19200
 const uartPort = "/dev/cu.wchusbserial1410"
 
 var fetchTime = time.Now
 
 // var multiline = false
+
+// var ln net.Listener
+// var conn net.Conn
 
 type Data struct {
 	Command string
@@ -122,6 +125,9 @@ func main() {
 	time.Sleep(time.Second)
 	sendAT(uart, "AT+CREG?")
 
+	time.Sleep(time.Second)
+	sendAT(uart, "AT+CSQ")
+
 	for {
 		time.Sleep(10 * time.Millisecond)
 		// wg.Add(1)
@@ -186,10 +192,9 @@ func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
 
 	message, err := bufio.NewReader(conn).ReadString('\n')
 
-	color.Green(message)
-
 	if err == nil {
 
+		color.Green(message)
 		//Getting data from Phone
 		fmt.Printf("Message Received: %s", yellow(string(message)))
 		var data Data
@@ -246,8 +251,10 @@ func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
 			sendAT(port, "AT+CREG?")
 		} else if strings.Compare(data.Command, "rssi") == 0 {
 			sendAT(port, "AT+CSQ")
-		} else if strings.Compare(data.Command, "epta") == 0 {
-			fmt.Fprintf(port, string([]byte{0x1A}))
+		} else if strings.Compare(data.Command, "acceptCall") == 0 {
+			sendAT(port, "ATA")
+		} else if strings.Compare(data.Command, "callEnd") == 0 {
+			sendAT(port, "ATH")
 		} else if strings.Compare(data.Command, "readSMS") == 0 {
 			if data.Text == "" {
 				sendAT(port, "AT+CMGL=\"REC UNREAD\"")
@@ -256,6 +263,12 @@ func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
 			}
 		}
 
+	} else {
+		// fmt.Println(err)
+		if err == io.EOF {
+			// conn, _ = ln.Accept()
+
+		}
 	}
 
 	// wg.Done()
@@ -296,15 +309,15 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 		for _, vE := range voltageErrors {
 			if strings.Index(item, vE) > -1 {
 				color.Red("Under-voltage")
-				fmt.Fprintf(conn, red("{\"info\":\"Under-voltage\"}"))
+				fmt.Fprintf(conn, red("{\"command\":\"Under-voltage\"}"))
 			}
 		}
 		if strings.Index(item, "+CMTE") > -1 {
 			color.Red("Device is running HOT")
-			fmt.Fprintf(conn, red("{\"info\":\"Device is running HOT\"}"))
+			fmt.Fprintf(conn, red("{\"command\":\"Device is running HOT\"}"))
 		} else if strings.Index(item, "NO CARRIER") > -1 {
 			color.Red("Call ended")
-			fmt.Fprintf(conn, green("{\"info\":\"call ended\"}"))
+			fmt.Fprintf(conn, green("{\"command\":\"callEnd\"}"))
 		} else if strings.Index(item, "+CUSD:") > -1 {
 			epta.Println("getResponse+CUSD")
 			re := regexp.MustCompile(`\+CUSD:\s\d+,\s+\"((?:(?:.+)|\n+)+)\",\s\d+`)
@@ -340,17 +353,18 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 			if len(res) > 0 {
 				if res[1] != "" {
 					color.Yellow("Phone number %s", res[1])
-					fmt.Fprintf(conn, yellow("{\"command\":\"incoming\", \"phone\":\"%s\"}\n"), res[1])
+					fmt.Fprintf(conn, "{\"command\":\"incoming\", \"number\":\"%s\"}\n", res[1])
 				}
 			}
 		} else if strings.Index(item, "+CMTI:") > -1 {
-			re := regexp.MustCompile(`\+CMTI\:\s+\"(?:\w+|\s+)+\",(\d)+`)
+			re := regexp.MustCompile(`\+CMTI\:\s+\"(?:\w+|\s+)+\",(\d+)`)
 			res := re.FindStringSubmatch(item)
 
 			if len(res) > -1 {
 				color.Yellow("New SMS %s", res[1])
-				fmt.Fprintf(conn, yellow("{\"response\":\"new SMS\"}\n"))
-				fmt.Fprintf(uart, "AT+CMGR=%s", res[1])
+				// fmt.Fprintf(conn, yellow("{\"response\":\"new SMS\"}\n"))
+				time.Sleep(time.Second)
+				fmt.Fprintf(uart, "AT+CMGR=%s\r\n", res[1])
 			}
 		} else if strings.Index(item, "+CMGR:") > -1 {
 			color.Red("Asd")
@@ -406,7 +420,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 			if len(rssi) > 0 {
 				color.Yellow("RSSI %s", rssi[1])
-				fmt.Fprintf(conn, yellow("{\"rssi\":%s}"), rssi[1])
+				fmt.Fprintf(conn, "{\"command\":\"rssi\",\"text\":\"%s\"}\n", rssi[1])
 			}
 
 		} else if strings.Index(item, "+CREG:") > -1 {
@@ -417,16 +431,26 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 			if len(stat) > 0 {
 				color.Yellow("The network is %s", (map[bool]string{true: "connected", false: "searching"})[stat[1] != "0"])
-				fmt.Fprintf(conn, yellow("{\"connected\":%s}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
+				// fmt.Fprintf(conn, yellow("{\"command\":\"connected\", \"text\":\"%s\"}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
 			}
 
 		} else if strings.Index(item, "BUSY") > -1 {
-			fmt.Fprintf(conn, green("{\"callEnd\"}"))
+			fmt.Fprintf(conn, green("{\"command\":\"callEnd\"}"))
 		} else if strings.Index(item, "ERROR") > -1 {
 			color.Red("ERROR")
-			fmt.Fprintf(conn, red("{\"response\":\"ERROR\"}"))
+			fmt.Fprintf(conn, red("{\"command\":\"ERROR\"}"))
 		} else if strings.Index(item, "OK") > -1 {
 			color.Green("OK")
+			// fmt.Fprintf(conn, green("{\"command\":\"OK\"}"))
+		} else if strings.Index(item, "VOICE CALL: END: ") > -1 {
+			var duration int
+			_, err := fmt.Sscanf(item, "VOICE CALL: END: %06d", &duration)
+			if err != nil {
+				panic(err)
+			} else {
+				color.Yellow("Call Duration is %d", duration)
+				fmt.Fprintf(conn, yellow("{\"command\":\"duration\",\"text\":%d}"), duration)
+			}
 		} else {
 			lastCommand = append(lastCommand, item[:]...)
 			color.Red("LAST response is undefined")
@@ -439,7 +463,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 	if len(in) == 1 && in[0] == 0 {
 		color.Red("Restart?!")
-		fmt.Fprintf(conn, red("{\"response\":\"Restart?!\"}\n"))
+		fmt.Fprintf(conn, red("{\"command\":\"Restart?!\"}\n"))
 	}
 	// return out
 }
