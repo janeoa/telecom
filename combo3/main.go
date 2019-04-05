@@ -30,8 +30,8 @@ const myIP = "192.168.25.18"
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
 const tcpPort = 8081
-const baudrate = 19200
-const uartPort = "/dev/cu.wchusbserial1410"
+const baudrate = 9600
+const uartPort = "/dev/cu.usbmodem14201"
 
 var fetchTime = time.Now
 
@@ -212,7 +212,7 @@ func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
 		if strings.Compare(data.Command, "call") == 0 {
 			fmt.Fprintf(port, "ATD%s;\r\n", data.Phone)
 		} else if strings.Compare(data.Command, "sendUSSD") == 0 {
-			fmt.Fprintf(port, "AT+CUSD=1,\"%s\"\r\n", data.Text)
+			fmt.Fprintf(port, "AT+CUSD=1,\"%s\", 15\r\n", data.Text)
 		} else if strings.Compare(data.Command, "sendSMS") == 0 {
 			var res []rune
 			out := "0001000B91"
@@ -287,8 +287,8 @@ var lastCommand []byte
 
 func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 	yellow := color.New(color.FgYellow).SprintFunc()
-	red := color.New(color.FgRed).SprintFunc()
-	green := color.New(color.FgGreen).SprintFunc()
+	// red := color.New(color.FgRed).SprintFunc()
+	// green := color.New(color.FgGreen).SprintFunc()
 
 	epta := color.New(color.FgBlue)
 	epta.Printf("getResponse {%s}", string(in))
@@ -309,15 +309,15 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 		for _, vE := range voltageErrors {
 			if strings.Index(item, vE) > -1 {
 				color.Red("Under-voltage")
-				fmt.Fprintf(conn, red("{\"command\":\"Under-voltage\"}"))
+				fmt.Fprintf(conn, ("{\"command\":\"Under-voltage\"}\n"))
 			}
 		}
 		if strings.Index(item, "+CMTE") > -1 {
 			color.Red("Device is running HOT")
-			fmt.Fprintf(conn, red("{\"command\":\"Device is running HOT\"}"))
+			fmt.Fprintf(conn, ("{\"command\":\"Device is running HOT\"}\n"))
 		} else if strings.Index(item, "NO CARRIER") > -1 {
 			color.Red("Call ended")
-			fmt.Fprintf(conn, green("{\"command\":\"callEnd\"}"))
+			fmt.Fprintf(conn, ("{\"command\":\"callEnd\"}\n"))
 		} else if strings.Index(item, "+CUSD:") > -1 {
 			epta.Println("getResponse+CUSD")
 			re := regexp.MustCompile(`\+CUSD:\s\d+,\s+\"((?:(?:.+)|\n+)+)\",\s\d+`)
@@ -337,7 +337,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 				}
 
 				color.Yellow("The USSD result is %s", converted)
-				fmt.Fprintf(conn, yellow("{\"USSD\":%q}\n"), converted)
+				fmt.Fprintf(conn, ("{\"command\":\"USSD\",\"text\":%q}\n"), converted)
 			}
 			// } else {
 			// 	color.Yellow("The SMS was sent")
@@ -411,7 +411,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 					out = text1
 				}
 
-				fmt.Fprintf(conn, yellow("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q}"), phone, out)
+				fmt.Fprintf(conn, ("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q}\n"), phone, out)
 			}
 
 		} else if strings.Index(item, "+CSQ:") > -1 {
@@ -431,14 +431,14 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 			if len(stat) > 0 {
 				color.Yellow("The network is %s", (map[bool]string{true: "connected", false: "searching"})[stat[1] != "0"])
-				// fmt.Fprintf(conn, yellow("{\"command\":\"connected\", \"text\":\"%s\"}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
+				// fmt.Fprintf(conn, ("{\"command\":\"connected\", \"text\":\"%s\"}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
 			}
 
 		} else if strings.Index(item, "BUSY") > -1 {
-			fmt.Fprintf(conn, green("{\"command\":\"callEnd\"}"))
+			fmt.Fprintf(conn, ("{\"command\":\"callEnd\"}\n"))
 		} else if strings.Index(item, "ERROR") > -1 {
 			color.Red("ERROR")
-			fmt.Fprintf(conn, red("{\"command\":\"ERROR\"}"))
+			fmt.Fprintf(conn, ("{\"command\":\"ERROR\"}\n"))
 		} else if strings.Index(item, "OK") > -1 {
 			color.Green("OK")
 			// fmt.Fprintf(conn, green("{\"command\":\"OK\"}"))
@@ -449,7 +449,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 				panic(err)
 			} else {
 				color.Yellow("Call Duration is %d", duration)
-				fmt.Fprintf(conn, yellow("{\"command\":\"duration\",\"text\":%d}"), duration)
+				fmt.Fprintf(conn, ("{\"command\":\"duration\",\"text\":\"%d\"}\n"), duration)
 			}
 		} else {
 			lastCommand = append(lastCommand, item[:]...)
@@ -463,7 +463,7 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 
 	if len(in) == 1 && in[0] == 0 {
 		color.Red("Restart?!")
-		fmt.Fprintf(conn, red("{\"command\":\"Restart?!\"}\n"))
+		fmt.Fprintf(conn, ("{\"command\":\"Restart?!\"}\n"))
 	}
 	// return out
 }
