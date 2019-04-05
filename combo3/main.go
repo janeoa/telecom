@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ const seconds = 0.01
 
 // const myIP = "192.168.0.100"
 var myIP = "192.168.25.18" //default (changes)
+var conn net.Conn
 
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
@@ -42,23 +44,25 @@ var fetchTime = time.Now
 // var ln net.Listener
 // var conn net.Conn
 
+// Data is for JSON
 type Data struct {
 	Command string
 	Phone   string
 	Text    string
 }
 
+// UCS2 is to convert
 type UCS2 []byte
 
 func main() {
 
 	ip, err := externalIP()
 	if err != nil {
-		fmt.Println(err)
-		fmt.Println("Because of error, default ip is used", myIP)
+		color.Red("%s", err)
+		color.Red("Because of error, default ip is used")
 	} else {
 		if myIP != ip {
-			color.Red("The default ip is incorrect\n")
+			color.Red("The ip is changed!\n")
 		}
 		myIP = ip
 	}
@@ -125,11 +129,10 @@ func main() {
 	chk(downstream.Start())
 
 	//TCP
-	ln, _ := net.Listen("tcp", fmt.Sprintf(":%d", tcpPort))
-	color.Green("Waiting for TCP connection...")
-	conn, _ := ln.Accept()
 
-	go recieve(conn, uart)
+	go tcpLoop(&conn, uart)
+
+	go recieve(&conn, uart)
 
 	// fmt.Fprintf(conn, "The network is")
 
@@ -142,12 +145,6 @@ func main() {
 
 	time.Sleep(time.Second)
 	sendAT(uart, "AT+CSQ")
-
-	for {
-		time.Sleep(10 * time.Millisecond)
-		// wg.Add(1)
-		go checkTCP(conn, uart)
-	}
 
 	//DESTRUCTOR
 
@@ -199,93 +196,97 @@ func int16ToBytes(i int16) []byte {
 	return ([]byte{h, l})
 }
 
-func checkTCP(conn io.ReadWriteCloser, port io.ReadWriteCloser) {
+func checkTCP(conn *net.Conn, port io.ReadWriteCloser) {
 
 	yellow := color.New(color.FgYellow).SprintFunc()
 	red := color.New(color.FgRed).SprintFunc()
 	red2 := color.New(color.FgRed).Add(color.Underline).SprintFunc()
 
-	message, err := bufio.NewReader(conn).ReadString('\n')
+	for {
+		message, err := bufio.NewReader(*conn).ReadString('\n')
 
-	if err == nil {
+		if err == nil {
 
-		color.Green(message)
-		//Getting data from Phone
-		fmt.Printf("Message Received: %s", yellow(string(message)))
-		var data Data
-		err := json.Unmarshal([]byte(message), &data)
-		if err != nil {
-			fmt.Printf("%s %s", red("Problem decoding JSON"), red2(err))
-		}
-		fmt.Println(data.Command)
+			color.Green(message)
+			//Getting data from Phone
+			fmt.Printf("Message Received: %s", yellow(string(message)))
+			var data Data
+			err := json.Unmarshal([]byte(message), &data)
+			if err != nil {
+				fmt.Printf("%s %s", red("Problem decoding JSON"), red2(err))
+			}
+			fmt.Println(data.Command)
 
-		if len(data.Phone) > 1 {
-			data.Phone = formatPhone(data.Phone)
-		}
-		color.Red(data.Phone)
-		//Working with data
-		if strings.Compare(data.Command, "call") == 0 {
-			fmt.Fprintf(port, "ATD%s;\r\n", data.Phone)
-		} else if strings.Compare(data.Command, "sendUSSD") == 0 {
-			fmt.Fprintf(port, "AT+CUSD=1,\"%s\", 15\r\n", data.Text)
-		} else if strings.Compare(data.Command, "sendSMS") == 0 {
-			var res []rune
-			out := "0001000B91"
-			phone := encodePhone(data.Phone)
-			res = append(res, []rune(out + phone + "00" + "08")[:]...)
-			// res := out + phone + "00" + "08" + "AA"
-			text := hex.EncodeToString(UCS2.Encode([]byte(data.Text)))
-			hexL := strconv.FormatInt(int64(len(text)/2), 16)
-			if len(hexL) < 2 {
-				hexL = "0" + hexL
+			if len(data.Phone) > 1 {
+				data.Phone = formatPhone(data.Phone)
+			}
+			color.Red(data.Phone)
+			//Working with data
+			if strings.Compare(data.Command, "call") == 0 {
+				fmt.Fprintf(port, "ATD%s;\r\n", data.Phone)
+			} else if strings.Compare(data.Command, "sendUSSD") == 0 {
+				fmt.Fprintf(port, "AT+CUSD=1,\"%s\", 15\r\n", data.Text)
+			} else if strings.Compare(data.Command, "sendSMS") == 0 {
+				var res []rune
+				out := "0001000B91"
+				phone := encodePhone(data.Phone)
+				res = append(res, []rune(out + phone + "00" + "08")[:]...)
+				// res := out + phone + "00" + "08" + "AA"
+				text := hex.EncodeToString(UCS2.Encode([]byte(data.Text)))
+				hexL := strconv.FormatInt(int64(len(text)/2), 16)
+				if len(hexL) < 2 {
+					hexL = "0" + hexL
+				}
+
+				res = append(res, []rune(hexL)[:]...)
+				res = append(res, []rune(text)[:]...)
+
+				lengz := len(res)/2 - 1
+
+				color.Yellow("Lengz: %d", lengz)
+
+				fmt.Fprintf(port, "AT+CMGS=%d\r", lengz)
+				time.Sleep(time.Second)
+				fmt.Fprintf(port, "%s\r", string(res))
+				time.Sleep(time.Second)
+				fmt.Fprintf(port, string([]byte{0x1A}))
+				// sendAT(port, "AT+CMGF=1")
+				// sendAT(port, fmt.Sprintf("AT+CMGS=\"%s\"", data.Phone))
+				// time.Sleep(time.Second)
+				// fmt.Fprintf(port, data.Text)
+				// time.Sleep(time.Second)
+				// fmt.Fprintf(port, string([]byte{0x1A}))
+				// sendAT(port, "AT+CMGF=0")
+
+			} else if strings.Compare(data.Command, "AT") == 0 {
+				sendAT(port, data.Text)
+			} else if strings.Compare(data.Command, "status") == 0 {
+				sendAT(port, "AT+CREG?")
+			} else if strings.Compare(data.Command, "rssi") == 0 {
+				sendAT(port, "AT+CSQ")
+			} else if strings.Compare(data.Command, "acceptCall") == 0 {
+				sendAT(port, "ATA")
+			} else if strings.Compare(data.Command, "callEnd") == 0 {
+				sendAT(port, "ATH")
+			} else if strings.Compare(data.Command, "readSMS") == 0 {
+				if data.Text == "" {
+					sendAT(port, "AT+CMGL=\"REC UNREAD\"")
+				} else {
+					fmt.Fprintf(port, "AT+CMGL=\"%s\"", data.Text)
+				}
 			}
 
-			res = append(res, []rune(hexL)[:]...)
-			res = append(res, []rune(text)[:]...)
-
-			lengz := len(res)/2 - 1
-
-			color.Yellow("Lengz: %d", lengz)
-
-			fmt.Fprintf(port, "AT+CMGS=%d\r", lengz)
-			time.Sleep(time.Second)
-			fmt.Fprintf(port, "%s\r", string(res))
-			time.Sleep(time.Second)
-			fmt.Fprintf(port, string([]byte{0x1A}))
-			// sendAT(port, "AT+CMGF=1")
-			// sendAT(port, fmt.Sprintf("AT+CMGS=\"%s\"", data.Phone))
-			// time.Sleep(time.Second)
-			// fmt.Fprintf(port, data.Text)
-			// time.Sleep(time.Second)
-			// fmt.Fprintf(port, string([]byte{0x1A}))
-			// sendAT(port, "AT+CMGF=0")
-
-		} else if strings.Compare(data.Command, "AT") == 0 {
-			sendAT(port, data.Text)
-		} else if strings.Compare(data.Command, "status") == 0 {
-			sendAT(port, "AT+CREG?")
-		} else if strings.Compare(data.Command, "rssi") == 0 {
-			sendAT(port, "AT+CSQ")
-		} else if strings.Compare(data.Command, "acceptCall") == 0 {
-			sendAT(port, "ATA")
-		} else if strings.Compare(data.Command, "callEnd") == 0 {
-			sendAT(port, "ATH")
-		} else if strings.Compare(data.Command, "readSMS") == 0 {
-			if data.Text == "" {
-				sendAT(port, "AT+CMGL=\"REC UNREAD\"")
-			} else {
-				fmt.Fprintf(port, "AT+CMGL=\"%s\"", data.Text)
+		} else {
+			fmt.Println(err)
+			if err == io.EOF {
+				// conn, _ = ln.Accept()
+				fmt.Println("Error reading:", err.Error())
+				yo := *conn
+				yo.Close()
+				break
 			}
-		}
-
-	} else {
-		// fmt.Println(err)
-		if err == io.EOF {
-			// conn, _ = ln.Accept()
-
 		}
 	}
-
 	// wg.Done()
 }
 
@@ -300,7 +301,10 @@ func sendAT(s io.ReadWriteCloser, comm string) {
 var voltageErrors = [...]string{"UNDER-VOLTAGE POWER DOWN", "UNDER-VOLTAGE WARNNING", "OVER-VOLTAGE POWER DOWN", "OVER-VOLTAGE WARNNING"}
 var lastCommand []byte
 
-func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
+func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
+
+	conn := *conO
+
 	yellow := color.New(color.FgYellow).SprintFunc()
 	// red := color.New(color.FgRed).SprintFunc()
 	// green := color.New(color.FgGreen).SprintFunc()
@@ -312,6 +316,13 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 	res0 := strings.Split(string(in), "\r\n") //reO.FindAllString(string(in), -1)
 
 	for _, item := range res0 {
+
+		// fmt.Println("conn ", conn)
+
+		if conn == nil {
+			color.Red("conn is nil")
+			continue
+		}
 
 		if len(item) == 0 {
 			continue
@@ -483,7 +494,8 @@ func getResponse(uart io.ReadWriteCloser, conn net.Conn, in []byte) {
 	// return out
 }
 
-func recieve(conn net.Conn, s io.ReadWriteCloser) {
+func recieve(con0 *net.Conn, s io.ReadWriteCloser) {
+	conn := *con0
 	for {
 		time.Sleep(time.Second)
 		color.Cyan("READING...")
@@ -504,7 +516,7 @@ func recieve(conn net.Conn, s io.ReadWriteCloser) {
 
 		if strings.HasSuffix(string(buf[:n]), "\r\n") || strings.HasSuffix(string(buf[:n]), string([]byte{0x0d, 0x0a, 0x00})) {
 			color.Green("\\r\\n")
-			getResponse(s, conn, lastCommand)
+			getResponse(s, con0, lastCommand)
 			lastCommand = lastCommand[:0]
 			// fmt.Printf("After{%s}\n", string(lastCommand))
 		}
@@ -527,11 +539,13 @@ func formatPhone(in string) string {
 	if len(out) == 11 {
 		out = "+" + out
 		return out
-	} else {
-		return "ERROR"
 	}
+
+	return "ERROR"
+
 }
 
+//Encode is to encode
 func (s UCS2) Encode() []byte {
 	e := unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM)
 	es, _, err := transform.Bytes(e.NewEncoder(), s)
@@ -630,4 +644,23 @@ func externalIP() (string, error) {
 		}
 	}
 	return "", errors.New("are you connected to the network?")
+}
+
+func tcpLoop(conn *net.Conn, uart io.ReadWriteCloser) {
+	ln, _ := net.Listen("tcp", fmt.Sprintf(":%d", tcpPort))
+	color.Blue("Waiting for TCP connection...")
+	var err error
+	for {
+		*conn, err = ln.Accept()
+
+		fmt.Println("conn ", conn)
+
+		if err != nil {
+			color.Red("Error TCP connection: ", err.Error())
+			os.Exit(1)
+		}
+		time.Sleep(10 * time.Millisecond)
+		// wg.Add(1)
+		go checkTCP(conn, uart)
+	}
 }
