@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -26,7 +27,8 @@ const phoneMicSampleRate = 8000
 const seconds = 0.01
 
 // const myIP = "192.168.0.100"
-const myIP = "192.168.25.18"
+var myIP = "192.168.25.18" //default (changes)
+
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
 const tcpPort = 8081
@@ -50,7 +52,20 @@ type UCS2 []byte
 
 func main() {
 
-	debug := color.New(color.FgRed).PrintfFunc()
+	ip, err := externalIP()
+	if err != nil {
+		fmt.Println(err)
+		fmt.Println("Because of error, default ip is used", myIP)
+	} else {
+		if myIP != ip {
+			color.Red("The default ip is incorrect\n")
+		}
+		myIP = ip
+	}
+	color.Green("local    ip is %s\n", myIP)
+	color.Green("External ip is %s\n", secondIP)
+
+	// debug := color.New(color.FgRed).PrintfFunc()
 
 	/** INIT */
 	portaudio.Initialize()
@@ -111,7 +126,7 @@ func main() {
 
 	//TCP
 	ln, _ := net.Listen("tcp", fmt.Sprintf(":%d", tcpPort))
-	debug("Waiting for TCP connection...")
+	color.Green("Waiting for TCP connection...")
 	conn, _ := ln.Accept()
 
 	go recieve(conn, uart)
@@ -578,4 +593,41 @@ func DecodePDU7(h string) (result string) {
 	}
 
 	return result
+}
+
+func externalIP() (string, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue // interface down
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue // loopback interface
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return "", err
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ip = ip.To4()
+			if ip == nil {
+				continue // not an ipv4 address
+			}
+			return ip.String(), nil
+		}
+	}
+	return "", errors.New("are you connected to the network?")
 }
