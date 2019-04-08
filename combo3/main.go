@@ -30,14 +30,14 @@ const seconds = 0.01
 // const myIP = "192.168.0.100"
 var myIP = "192.168.25.18" //default (changes)
 var conn net.Conn
+var fetchTime = time.Now
+var cusdFlag = false
 
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
 const tcpPort = 8081
 const baudrate = 9600
 const uartPort = "/dev/cu.usbmodem14201"
-
-var fetchTime = time.Now
 
 // var multiline = false
 
@@ -141,10 +141,10 @@ func main() {
 	sendAT(uart, "AT")
 
 	time.Sleep(time.Second)
-	sendAT(uart, "AT+CREG?")
+	sendAT(uart, "AT+CSQ")
 
 	time.Sleep(time.Second)
-	sendAT(uart, "AT+CSQ")
+	sendAT(uart, "AT+CREG?")
 
 	//DESTRUCTOR
 
@@ -344,9 +344,17 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 		} else if strings.Index(item, "NO CARRIER") > -1 {
 			color.Red("Call ended")
 			fmt.Fprintf(conn, ("{\"command\":\"callEnd\"}\n"))
+		} else if strings.Index(item, "MISSED_CALL:") > -1 {
+			re := regexp.MustCompile(`MISSED\_CALL\:\s\d{2}\:\d{2}(?:AM|PM)\s(\+?\d+)`)
+			res := re.FindStringSubmatch(item)
+
+			if len(res) > 0 {
+				color.Yellow("Missed Call %s", res[1])
+				fmt.Fprintf(conn, ("{\"command\":\"missedCall\", \"phone\":\"%s\"}\n"), res[1])
+			}
 		} else if strings.Index(item, "+CUSD:") > -1 {
-			epta.Println("getResponse+CUSD")
-			re := regexp.MustCompile(`\+CUSD:\s\d+,\s+\"((?:(?:.+)|\n+)+)\",\s\d+`)
+			color.Green("getResponse+CUSD")
+			re := regexp.MustCompile(`\+CUSD:\s\d+,(?:\s+)?\"((?:(?:.+)|\n+)+)\"?,\s?\d+`)
 			res := re.FindStringSubmatch(item)
 
 			fmt.Printf("REGEX CUSD: %v\n", res)
@@ -364,6 +372,8 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 
 				color.Yellow("The USSD result is %s", converted)
 				fmt.Fprintf(conn, ("{\"command\":\"USSD\",\"text\":%q}\n"), converted)
+			} else {
+				cusdFlag = true
 			}
 			// } else {
 			// 	color.Yellow("The SMS was sent")
@@ -457,7 +467,7 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 
 			if len(stat) > 0 {
 				color.Yellow("The network is %s", (map[bool]string{true: "connected", false: "searching"})[stat[1] != "0"])
-				// fmt.Fprintf(conn, ("{\"command\":\"connected\", \"text\":\"%s\"}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
+				fmt.Fprintf(conn, ("{\"command\":\"connected\", \"text\":\"%s\"}\n"), (map[bool]string{true: "true", false: "false"})[stat[1] != "0"])
 			}
 
 		} else if strings.Index(item, "BUSY") > -1 {
@@ -478,8 +488,23 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 				fmt.Fprintf(conn, ("{\"command\":\"duration\",\"text\":\"%d\"}\n"), duration)
 			}
 		} else {
+			if cusdFlag {
+				converted := ""
+
+				convBytes, epta := hex.DecodeString(item)
+				if epta != nil {
+					converted = item
+				} else {
+					converted = string(UCS2.Decode(convBytes))
+				}
+				color.Yellow("The USSD result is %s", converted)
+				fmt.Fprintf(conn, ("{\"command\":\"USSD\",\"text\":%q}\n"), converted)
+				cusdFlag = false
+				continue
+			}
 			lastCommand = append(lastCommand, item[:]...)
 			color.Red("LAST response is undefined")
+
 			continue
 		}
 
@@ -499,7 +524,7 @@ func recieve(con0 *net.Conn, s io.ReadWriteCloser) {
 	for {
 		time.Sleep(time.Second)
 		color.Cyan("READING...")
-		buf := make([]byte, 256)
+		buf := make([]byte, 512)
 		n, err := s.Read(buf)
 		if err != nil {
 			fmt.Print(err)
