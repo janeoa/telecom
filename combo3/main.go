@@ -32,6 +32,7 @@ var myIP = "192.168.25.18" //default (changes)
 var conn net.Conn
 var fetchTime = time.Now
 var cusdFlag = false
+var cusd string
 
 const connport = 2000
 const secondIP = "192.168.25.32" //  "192.168.88.253"
@@ -145,6 +146,9 @@ func main() {
 
 	time.Sleep(time.Second)
 	sendAT(uart, "AT+CREG?")
+
+	time.Sleep(time.Second)
+	sendAT(uart, "AT+CLIP=1")
 
 	//DESTRUCTOR
 
@@ -353,32 +357,7 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 				fmt.Fprintf(conn, ("{\"command\":\"missedCall\", \"phone\":\"%s\"}\n"), res[1])
 			}
 		} else if strings.Index(item, "+CUSD:") > -1 {
-			color.Green("getResponse+CUSD")
-			re := regexp.MustCompile(`\+CUSD:\s\d+,(?:\s+)?\"((?:(?:.+)|\n+)+)\"?,\s?\d+`)
-			res := re.FindStringSubmatch(item)
-
-			fmt.Printf("REGEX CUSD: %v\n", res)
-
-			if len(res) > 0 {
-
-				converted := ""
-
-				convBytes, epta := hex.DecodeString(res[1])
-				if epta != nil {
-					converted = res[1]
-				} else {
-					converted = string(UCS2.Decode(convBytes))
-				}
-
-				color.Yellow("The USSD result is %s", converted)
-				fmt.Fprintf(conn, ("{\"command\":\"USSD\",\"text\":%q}\n"), converted)
-			} else {
-				cusdFlag = true
-			}
-			// } else {
-			// 	color.Yellow("The SMS was sent")
-			// 	fmt.Fprintf(conn, yellow("{\"SMS\":\"send\"}"))
-			// }
+			getCUSD(item)
 		} else if strings.Index(item, "+CLIP:") > -1 {
 
 			// color.Yellow("CLIP!!!!!!!!!!")
@@ -488,20 +467,6 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 				fmt.Fprintf(conn, ("{\"command\":\"duration\",\"text\":\"%d\"}\n"), duration)
 			}
 		} else {
-			if cusdFlag {
-				converted := ""
-
-				convBytes, epta := hex.DecodeString(item)
-				if epta != nil {
-					converted = item
-				} else {
-					converted = string(UCS2.Decode(convBytes))
-				}
-				color.Yellow("The USSD result is %s", converted)
-				fmt.Fprintf(conn, ("{\"command\":\"USSD\",\"text\":%q}\n"), converted)
-				cusdFlag = false
-				continue
-			}
 			lastCommand = append(lastCommand, item[:]...)
 			color.Red("LAST response is undefined")
 
@@ -539,8 +504,8 @@ func recieve(con0 *net.Conn, s io.ReadWriteCloser) {
 			fmt.Fprintf(conn, red("{\"warning\":\"voltage error\"}\n"))
 		}
 
-		if strings.HasSuffix(string(buf[:n]), "\r\n") || strings.HasSuffix(string(buf[:n]), string([]byte{0x0d, 0x0a, 0x00})) {
-			color.Green("\\r\\n")
+		if strings.HasSuffix(string(buf[:n]), "\n") || strings.HasSuffix(string(buf[:n]), string([]byte{0x0d, 0x0a, 0x00})) {
+			color.Green("just \\n")
 			getResponse(s, con0, lastCommand)
 			lastCommand = lastCommand[:0]
 			// fmt.Printf("After{%s}\n", string(lastCommand))
@@ -687,5 +652,57 @@ func tcpLoop(conn *net.Conn, uart io.ReadWriteCloser) {
 		time.Sleep(10 * time.Millisecond)
 		// wg.Add(1)
 		go checkTCP(conn, uart)
+	}
+}
+
+func getCUSD(item string) {
+	color.Green("getResponse+CUSD")
+	re := regexp.MustCompile(`\+CUSD:\s\d+,(?:\s+)?\"((?:(?:.+)|\n+)+)\"?,\s?\d+`)
+	res := re.FindStringSubmatch(item)
+
+	fmt.Printf("REGEX CUSD: %v\n", res)
+
+	if len(res) > 0 {
+
+		converted := ""
+
+		convBytes, epta := hex.DecodeString(res[1])
+		if epta != nil {
+			converted = res[1]
+		} else {
+			converted = string(UCS2.Decode(convBytes))
+		}
+
+		color.Yellow("The USSD result is %s", converted)
+		fmt.Fprintf(conn, ("{\"command\":\"USSD\",\"text\":%q}\n"), converted)
+	} else {
+		// cusdFlag = true
+		getCUSD(string(lastCommand) + item)
+	}
+}
+
+func getSMS(item string) {
+	color.Green("getSMS +CMT:")
+	re := regexp.MustCompile(`\+CMT:\s\"\",\d+(?:\r|\n|\r\n)([A-F0-9a-f]+)`)
+	res := re.FindStringSubmatch(item)
+
+	fmt.Printf("REGEX SMS: %v\n", res)
+
+	if len(res) > 0 {
+
+		converted := ""
+
+		convBytes, epta := hex.DecodeString(res[1])
+		if epta != nil {
+			converted = res[1]
+		} else {
+			converted = string(UCS2.Decode(convBytes))
+		}
+
+		color.Yellow("The USSD result is %s", converted)
+		fmt.Fprintf(conn, ("{\"command\":\"recieveSMS\",\"text\":%q}\n"), converted)
+	} else {
+		// cusdFlag = true
+		getSMS(string(lastCommand) + item)
 	}
 }
