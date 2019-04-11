@@ -35,7 +35,7 @@ var cusdFlag = false
 var cusd string
 
 const connport = 2000
-const secondIP = "192.168.25.32" //  "192.168.88.253"
+const secondIP = "192.168.25.34" //  "192.168.88.253"
 const tcpPort = 8081
 const baudrate = 9600
 const uartPort = "/dev/cu.usbmodem14201"
@@ -381,6 +381,8 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 				time.Sleep(time.Second)
 				fmt.Fprintf(uart, "AT+CMGR=%s\r\n", res[1])
 			}
+		} else if strings.Index(item, "+CMT:") > -1 {
+			getSMS(item)
 		} else if strings.Index(item, "+CMGR:") > -1 {
 			color.Red("Asd")
 			lastCommand = append(lastCommand, item[:]...)
@@ -689,18 +691,40 @@ func getSMS(item string) {
 	fmt.Printf("REGEX SMS: %v\n", res)
 
 	if len(res) > 0 {
+		convBytes := []rune(res[1])
 
-		converted := ""
+		index, _ := hex.DecodeString(string(convBytes[26*2 : 27*2]))
+		typeI, _ := hex.DecodeString(string(convBytes[36:38]))
 
-		convBytes, epta := hex.DecodeString(res[1])
-		if epta != nil {
-			converted = res[1]
+		color.Green(string(convBytes[26*2 : 27*2]))
+
+		index2 := len(convBytes) - int(index[0])*2
+		phone := parsePhone(convBytes[22:34])
+		converted, _ := hex.DecodeString(string(convBytes[index2:]))
+
+		text1 := DecodePDU7(string(convBytes[index2:]))
+
+		text2 := string(UCS2.Decode(converted))
+
+		color.Yellow("PDU: %s", res[1])
+		color.Yellow("Length: %d", index) //1	1
+		color.Yellow("phone: %s", phone)
+		color.Yellow("phone: %s", phone)
+		color.Yellow("SMS: %s", string(convBytes[index2:]))
+		color.Yellow("type: %s", hex.Dump(typeI))
+		color.Yellow("PDU7: %q", text1)
+		color.Yellow("UCS2: %q", text2)
+
+		// fmtet := fmt.Sprintf("%q", text1)
+		out := ""
+		// if []rune(fmtet)[1] == []rune("\\")[0] && []rune(fmtet)[2] == []rune("x")[0] {
+		if typeI[0] == 0x08 {
+			out = text2
 		} else {
-			converted = string(UCS2.Decode(convBytes))
+			out = text1
 		}
 
-		color.Yellow("The USSD result is %s", converted)
-		fmt.Fprintf(conn, ("{\"command\":\"recieveSMS\",\"text\":%q}\n"), converted)
+		fmt.Fprintf(conn, ("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q}\n"), phone, out)
 	} else {
 		// cusdFlag = true
 		getSMS(string(lastCommand) + item)
