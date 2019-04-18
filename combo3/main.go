@@ -23,19 +23,19 @@ import (
 	"golang.org/x/text/transform"
 )
 
-const pcMicSampleRate = 44100
-const phoneMicSampleRate = 8000
+const pcMicSampleRate = 8000     //44100
+const phoneMicSampleRate = 44100 //8000
 const seconds = 0.01
 
 // const myIP = "192.168.0.100"
-var myIP = "192.168.25.18" //default (changes)
+var myIP = "192.168.25.17" //default (changes)
 var conn net.Conn
 var fetchTime = time.Now
 var cusdFlag = false
 var cusd string
 
 const connport = 2000
-const secondIP = "192.168.25.34" //  "192.168.88.253"
+const secondIP = "192.168.25.45" //  "192.168.88.253"
 const tcpPort = 8081
 const baudrate = 9600
 const uartPort = "/dev/cu.usbmodem14201"
@@ -149,6 +149,9 @@ func main() {
 
 	time.Sleep(time.Second)
 	sendAT(uart, "AT+CLIP=1")
+
+	time.Sleep(time.Second)
+	sendAT(uart, "AT+CVHU=0")
 
 	//DESTRUCTOR
 
@@ -368,7 +371,7 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 			if len(res) > 0 {
 				if res[1] != "" {
 					color.Yellow("Phone number %s", res[1])
-					fmt.Fprintf(conn, "{\"command\":\"incoming\", \"number\":\"%s\"}\n", res[1])
+					fmt.Fprintf(conn, "{\"command\":\"incoming\", \"phone\":\"%s\"}\n", res[1])
 				}
 			}
 		} else if strings.Index(item, "+CMTI:") > -1 {
