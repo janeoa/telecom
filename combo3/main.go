@@ -701,7 +701,14 @@ func getSMS(item string) {
 
 		color.Green(string(convBytes[26*2 : 27*2]))
 
-		index2 := len(convBytes) - int(index[0])*2
+		var index2 int
+
+		if typeI[0] == 0x08 {
+			index2 = len(convBytes) - int(index[0])*2
+		} else {
+			index2 = len(convBytes) - LenghtInSep(int(index[0]))*2
+		}
+
 		phone := parsePhone(convBytes[22:34])
 		converted, _ := hex.DecodeString(string(convBytes[index2:]))
 
@@ -712,7 +719,7 @@ func getSMS(item string) {
 		color.Yellow("PDU: %s", res[1])
 		color.Yellow("Length: %d", index) //1	1
 		color.Yellow("phone: %s", phone)
-		color.Yellow("phone: %s", phone)
+		// color.Yellow("phone: %s", phone)
 		color.Yellow("SMS: %s", string(convBytes[index2:]))
 		color.Yellow("type: %s", hex.Dump(typeI))
 		color.Yellow("PDU7: %q", text1)
@@ -723,13 +730,27 @@ func getSMS(item string) {
 		// if []rune(fmtet)[1] == []rune("\\")[0] && []rune(fmtet)[2] == []rune("x")[0] {
 		if typeI[0] == 0x08 {
 			out = text2
+			color.Red("Hextets: %d", index) //1	1
+			color.Yellow("UCS2: %q", text2)
 		} else {
 			out = text1
+			color.Red("Septets: %d", LenghtInSep(int(index[0]))) //1	1
+			color.Yellow("PDU7: %q", text1)
 		}
 
-		fmt.Fprintf(conn, ("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q}\n"), phone, out)
+		fmt.Fprintf(conn, ("{\"command\":\"recieveSMS\", \"phone\":\"%s\", \"text\": %q}\n"), phone, strings.TrimRight(out, "\x00"))
 	} else {
 		// cusdFlag = true
 		getSMS(string(lastCommand) + item)
 	}
+}
+
+func LenghtInSep(in int) int {
+	var out float64
+	out = float64(in) * 7.0 / 8.0
+	chk := math.Floor(out)
+	if chk == out {
+		return int(out)
+	}
+	return int(chk) + 1
 }
