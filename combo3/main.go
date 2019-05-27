@@ -33,12 +33,15 @@ var conn net.Conn
 var fetchTime = time.Now
 var cusdFlag = false
 var cusd string
+var atOKFlag = false
+var moduleIsUp = false
+var tcpIsUP = false
 
 const connport = 2000
 const secondIP = "192.168.25.45" //  "192.168.88.253"
 const tcpPort = 8081
 const baudrate = 9600
-const uartPort = "/dev/cu.usbmodem14201"
+const uartPort = "/dev/cu.wchusbserial1410"
 
 // var multiline = false
 
@@ -135,11 +138,32 @@ func main() {
 
 	go recieve(&conn, uart)
 
+	var initCount uint64 = 0
 	// fmt.Fprintf(conn, "The network is")
+	atOKFlag = true
+	for {
+		initCount++
+		color.Green("init %d", initCount)
+		time.Sleep(time.Second * 1)
+		sendAT(uart, "AT")
 
-	color.Green("AT")
-	time.Sleep(time.Second)
-	sendAT(uart, "AT")
+		//DESTRUCTOR
+
+		// time.Sleep(time.Second * 2)
+
+		color.Blue("the check")
+
+		if !moduleIsUp {
+			color.Red("Module is powered OFF!")
+			if tcpIsUP {
+				fmt.Fprintf(conn, "{\"command\":\"ERROR\", \"text\":\"NO GSM Module found\"}\n")
+			} else {
+				color.Red("NO TCP connection\n")
+			}
+
+			// os.Exit(0)
+		}
+	}
 
 	time.Sleep(time.Second)
 	sendAT(uart, "AT+CSQ")
@@ -153,9 +177,7 @@ func main() {
 	time.Sleep(time.Second)
 	sendAT(uart, "AT+CVHU=0")
 
-	//DESTRUCTOR
-
-	time.Sleep(time.Second * 60 * 30)
+	time.Sleep(time.Second * 60 * 60 * 24)
 
 	color.Red("EXIT, CODE: 0.")
 	defer uart.Close()
@@ -288,6 +310,7 @@ func checkTCP(conn *net.Conn, port io.ReadWriteCloser) {
 			if err == io.EOF {
 				// conn, _ = ln.Accept()
 				fmt.Println("Error reading:", err.Error())
+				tcpIsUP = false
 				yo := *conn
 				yo.Close()
 				break
@@ -461,6 +484,8 @@ func getResponse(uart io.ReadWriteCloser, conO *net.Conn, in []byte) {
 			fmt.Fprintf(conn, ("{\"command\":\"ERROR\"}\n"))
 		} else if strings.Index(item, "OK") > -1 {
 			color.Green("OK")
+			atOKFlag = false
+			moduleIsUp = true
 			// fmt.Fprintf(conn, green("{\"command\":\"OK\"}"))
 		} else if strings.Index(item, "VOICE CALL: END: ") > -1 {
 			var duration int
@@ -649,6 +674,7 @@ func tcpLoop(conn *net.Conn, uart io.ReadWriteCloser) {
 		*conn, err = ln.Accept()
 
 		fmt.Println("conn ", conn)
+		tcpIsUP = true
 
 		if err != nil {
 			color.Red("Error TCP connection: ", err.Error())
@@ -745,6 +771,7 @@ func getSMS(item string) {
 	}
 }
 
+//LenghtInSep asd
 func LenghtInSep(in int) int {
 	var out float64
 	out = float64(in) * 7.0 / 8.0
