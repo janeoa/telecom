@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ var cusd string
 var atOKFlag = false
 var moduleIsUp = false
 var tcpIsUP = false
+var onMAC = false
 
 const connport = 2000
 const secondIP = "192.168.25.45" //  "192.168.88.253"
@@ -59,6 +61,11 @@ type Data struct {
 type UCS2 []byte
 
 func main() {
+
+	if runtime.GOOS == "darwin" {
+		onMAC = (runtime.GOOS == "darwin")
+		color.Green("Hello from MAC")
+	}
 
 	ip, err := externalIP()
 	if err != nil {
