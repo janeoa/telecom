@@ -19,12 +19,13 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/gordonklaus/portaudio"
+	rpio "github.com/stianeikeland/go-rpio"
 	"github.com/tarm/serial"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
 
-const pcMicSampleRate = 8000     //44100
+const pcMicSampleRate = 44100    //44100
 const phoneMicSampleRate = 44100 //8000
 const seconds = 0.01
 
@@ -40,9 +41,11 @@ var tcpIsUP = false
 var onMAC = false
 
 const connport = 2000
-const secondIP = "192.168.25.45" //  "192.168.88.253"
+const secondIP = "192.168.25.200" //  "192.168.88.253"
 const tcpPort = 8081
 const baudrate = 9600
+
+//const uartPort = "/dev/ttyS0"
 const uartPort = "/dev/cu.wchusbserial1410"
 
 // var multiline = false
@@ -166,6 +169,30 @@ func main() {
 				fmt.Fprintf(conn, "{\"command\":\"ERROR\", \"text\":\"NO GSM Module found\"}\n")
 			} else {
 				color.Red("NO TCP connection\n")
+			}
+
+			if !onMAC {
+				err := rpio.Open()
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(0)
+				}
+
+				pin := rpio.Pin(18)
+
+				pin.Output() // Output mode
+
+				// for {
+				color.Yellow("pin 18 set HIGH")
+				pin.High()
+				time.Sleep(2000 * time.Millisecond)
+				color.Yellow("pin 18 set LOW")
+				pin.Low()
+				time.Sleep(5000 * time.Millisecond)
+
+				// }
+
+				pin.High() // Set pin High
 			}
 
 			// os.Exit(0)
